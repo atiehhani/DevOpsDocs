@@ -1,3 +1,7 @@
+### 3) Preprocess
+```bash
+sudo dnf upgrade
+```
 ### 4) Load Balancer installation  
 To provide standard and High Availability service, the Load balancer will be placed between the Worker and Master nodes. Therefore, Worker nodes will communicate with Master servers only through the Load balancer. It is recommended to use two virtual Load balancer servers and to configure a VIP for these two Load balancers using the keepalived service. Wherever Load balancer IP is mentioned in the Config files, it refers to this VIP.
 
