@@ -1,4 +1,32 @@
-### 3) Preprocess
+### 1) Key Concepts and Items
+Server: In RKE2, this system service includes all Kubernetes Master sub-services.
+
+Agent: In RKE2, this system service includes all Kubernetes Worker sub-services.
+
+MainCluster: This cluster represents the main cluster at Informatics Services Company.
+
+BankCluster: Represents the cluster implemented by a bank.
+
+Token: Created by the first Master node and used by other nodes to join the cluster.
+
+Note: The Token is a random string. The Token mentioned in this document cannot be used at installation time.
+
+### 2) Structure
+RKE2 (Rancher Kubernetes Engine 2) is a well-known Kubernetes distribution developed by Rancher. The most important difference between RKE2 and other Kubernetes distributions is the simplicity of deployment and support in offline or air-gapped environments. For this purpose, Rancher provides all required artifacts and images in the form of several compressed files and uses these artifacts through a bootstrap script to set up the cluster and its components. It should be noted that the container runtime and internal image repository mechanism are also embedded in RKE2.
+#### Main cluster components:
+
+LoadBalancer: Two Nginx servers act as load balancers for Master nodes for Workers and Masters.
+
+VIP (Virtual IP): An IP address that does not physically belong to a specific machine and receives requests ahead of the LoadBalancer.
+
+RKE2 Server (k8s Master): At least 3 nodes.
+
+RKE2 Agent (k8s Worker): In this document, only one node is added. Obviously, the number of Worker nodes in production will be higher.
+
+This cluster requires a Distributed File System, and the recommended storage is Ceph or Rook Ceph.
+### 3-1) Overall Service Diagram
+
+### 3-2) Preprocess
 ```bash
 sudo dnf upgrade
 ```
