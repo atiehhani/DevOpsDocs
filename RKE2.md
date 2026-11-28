@@ -641,7 +641,336 @@ docker push local-REPOSITORY/Image-Name:TAG
 
 ```
 #### 8-2) Backing up CoreDNS
-During the RKE2 cluster version update, the CoreDNS module Configmap contents are automatically cleared. Only if the relevant coredns and nginx-ingress
+Since during the RKE2 cluster version update, the contents of the CoreDNS module ConfigMap are automatically deleted, and only if the CoreDNS and nginx-ingress config files exist in the following path on all Master nodes:
+```bash
+ls -ltrh /var/lib/rancher/rke2/server/manifests/rke2-*-config.yaml
+-rw------- 1 root root 7422 Oct 24 11:25 /var/lib/rancher/rke2/server/manifests/rke2-coredns-config.yaml
+-rw-r--r-- 1 root root  593 Oct  7 13:45 /var/lib/rancher/rke2/server/manifests/rke2-ingress-nginx-config.yaml
+```
+Back up CoreDNS with the following commands:
+```bash
+cd /root/rke2_v1.33.8+rke2r1
+kubectl get cm -n kube-system rke2-coredns-rke2-coredns -o yaml | sed -e '/creationTimestamp/d' -e '/helm.sh\/chart/d' -e '/resourceVersion/d' -e '/uid:/d' > bkp_cm_rke2-coredns-rke2-coredns.yaml
+```
+After completing the update operation, check the ConfigMap information and ensure CoreDNS is working properly.
+
+```bash
+
+cd /root/rke2_v1.33.8+rke2r1
+kubectl -n kube-system rollout status deployments.apps rke2-coredns-rke2-coredns
+```
+Expected output:
+```bash
+Waiting for deployment "rke2-coredns-rke2-coredns" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "rke2-coredns-rke2-coredns" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "rke2-coredns-rke2-coredns" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "rke2-coredns-rke2-coredns" rollout to finish: 1 of 2 updated replicas are available...
+deployment "rke2-coredns-rke2-coredns" successfully rolled out
+```
+```bash
+kubectl -n kube-system get deployments.apps rke2-coredns-rke2-coredns
+NAME                       READY   UP-TO-DATE   AVAILABLE   AGE
+rke2-coredns-rke2-coredns  2/2     2            2           150d
+```
+#### 8-3) Scheduling Master Servers
+Remove the NoSchedule taint from Master nodes and after successful completion of the update operation, place them back in NoSchedule mode.
+```bash
+# Schedule master nodes
+kubectl taint nodes BankCluster-03 node-role.kubernetes.io/control-plane:NoSchedule-
+kubectl taint nodes BankCluster-02 node-role.kubernetes.io/control-plane:NoSchedule-
+kubectl taint nodes BankCluster-03 node-role.kubernetes.io/control-plane:NoSchedule-
+
+# Unschedule master nodes
+kubectl taint nodes BankCluster-01 node-role.kubernetes.io/control-plane:NoSchedule
+kubectl taint nodes BankCluster-02 node-role.kubernetes.io/control-plane:NoSchedule
+kubectl taint nodes BankCluster-03 node-role.kubernetes.io/control-plane:NoSchedule
+```
+#### 8-4) Checking Pod Status
+Before and during the update operation, check and monitor the status of all pods in all Namespaces, for example using k9s with the !Running filter.
+
+#### 8-5) Controlling Rook-Ceph and OSD Disks Status
+To prevent additional load and shorten the update operation time, in the Rook-Ceph cluster, apply the following commands before updating the servers containing OSD disks, and monitor the Rook-Ceph cluster status during the operation.
+
+```bash
+kubectl -n rook-ceph exec -it deployments/rook-ceph-tools -- bash
+bash-5.1$ ceph osd set noout
+noout is set
+bash-5.1$ ceph osd set norebalance
+norebalance is set
+bash-5.1$ ceph osd set nobackfill
+nobackfill is set
+bash-5.1$ ceph osd set norecover
+norecover is set
+bash-5.1$ watch ceph -s
+```
+Expected output:
+```bash
+cluster:
+  id:     9929e026-bc08-4afd-8ff4-faa58779161b
+  health: HEALTH_WARN
+          noout,nobackfill,norebalance,norecover flag(s) set
+services:
+  mon: 3 daemons, quorum a,b,c (age 2h)
+  mgr: a(active, since 2h), standbys: b
+  mds: 1/1 daemons up, 1 hot standby
+  osd: 8 osds: 8 up (since 2h), 8 in (since 3w)
+  flags noout,nobackfill,norebalance,norecover
+data:
+  volumes: 1/1 healthy
+  pools:   4 pools, 97 pgs
+  objects: 3.80k objects, 305 MiB
+  usage:   1.4 GiB used, 124 GiB / 125 GiB avail
+  pgs:     97 active+clean
+io:
+  client:   852 B/s rd, 1 op/s rd, 0 op/s wr
+```
+After completing the update of each server containing OSD disks, apply the following commands and check the Rook-Ceph cluster status.
+```bash
+kubectl -n rook-ceph exec -it deployments/rook-ceph-tools -- bash
+bash-5.1$ ceph osd unset noout
+noout is unset
+bash-5.1$ ceph osd unset norebalance
+norebalance is unset
+bash-5.1$ ceph osd unset nobackfill
+nobackfill is unset
+bash-5.1$ ceph osd unset norecover
+norecover is unset
+bash-5.1$ ceph -s
+```
+Expected output:
+```bash
+cluster:
+  id:     9929e026-bc08-4afd-8ff4-faa58779161b
+  health: HEALTH_OK
+services:
+  mon: 3 daemons, quorum a,b,c (age 2h)
+  mgr: a(active, since 2h), standbys: b
+  mds: 1/1 daemons up, 1 hot standby
+  osd: 8 osds: 8 up (since 2h), 8 in (since 3w)
+data:
+  volumes: 1/1 healthy
+  pools:   4 pools, 97 pgs
+  objects: 3.80k objects, 305 MiB
+  usage:   1.4 GiB used, 124 GiB / 125 GiB avail
+  pgs:     97 active+clean
+io:
+  client:   1.2 KiB/s rd, 85 B/s wr, 2 op/s rd, 0 op/s wr
+```
+**Note:** Be sure to verify the health of the Rook-Ceph cluster before starting the operation.
+
+#### 8-6) Updating Master Servers
+The RKE2 cluster update must be performed from the Master servers one by one as follows.
+```bash
+# take backup from rke2 artifacts
+mkdir /root/bkp_rke2_1.32.6
+mv /var/lib/rancher/rke2/agent/images/rke2-images* /root/bkp_rke2_1.32.6/
+mv /usr/local/bin/rke2* /root/bkp_rke2_1.32.6/
+ls -ltrh /root/bkp_rke2_1.32.6
+```
+Expected output:
+```bash
+total 1.4G
+-rwxr-xr-x 1 root root 5.5K Feb 18 07:28 rke2-uninstall.sh
+-rwxr-xr-x 1 root root 3.4K Feb 18 07:28 rke2-killall.sh
+-rwxr-xr-x 1 root root 119M Feb 18 07:28 rke2
+-rw-r--r-- 1 root root 425M Feb 18 07:29 rke2-images-cilium.linux-amd64.tar.zst
+-rw-r--r-- 1 root root 793M Feb 18 07:29 rke2-images.linux-amd64.tar.zst
+```
+```bash
+# uncompress tar file
+tar -xvf rke2_<new version>.tar
+# copy needed new artifacts
+cd /root/rke2_<new version>_full
+cp rke2_<new version>_images/* /var/lib/rancher/rke2/agent/images/
+ls -ltrh /var/lib/rancher/rke2/agent/images/
+```
+Expected output:
+```bash
+total 1.3G
+-rw-r--r-- 1 root root 557M Feb 18 11:28 rke2-images-cilium.linux-amd64.tar.zst
+-rw-r--r-- 1 root root 719M Feb 18 11:28 rke2-images.linux-amd64.tar.zst
+```
+```bash
+cd rke2<new version>
+tar xvfz rke2.linux-amd64.tar.gz
+cp bin/rke2-uninstall.sh bin/rke2-killall.sh bin/rke2 /usr/local/bin/
+chmod +x /usr/local/bin/*
+ls -ltrh /usr/local/bin/rke2*
+```
+Expected output:
+```bash
+-rwxr-xr-x 1 root root 5.5K Feb 18 11:23 /usr/local/bin/rke2-uninstall.sh
+-rwxr-xr-x 1 root root 3.3K Feb 18 11:23 /usr/local/bin/rke2-killall.sh
+-rwxr-xr-x 1 root root 119M Feb 18 11:23 /usr/local/bin/rke2
+```
+```bash
+rke2-killall.sh ; systemctl restart rke2-server
+```
+**Note** that the rke2-server service may take time to become ready, and the service log should be checked if needed.  
+ After the update is complete, the cluster status is as follows.  
+ **Note** that the mentioned versions are examples only.
+```bash
+kubectl get nodes -o wide
+NAME            STATUS   ROLES                       AGE    VERSION          INTERNAL-IP    EXTERNAL-IP   OS-IMAGE                KERNEL-VERSION                 CONTAINER-RUNTIME
+BankCluster-01  Ready    control-plane,etcd,master   150d   v1.33.8+rke2r1   192.168.10.11  <none>        Oracle Linux Server 9.6  6.12.0-105.51.5.el9uek.x86_64  containerd://2.1.5-k3s1
+BankCluster-02  Ready    control-plane,etcd,master   150d   v1.32.6+rke2r1   192.168.10.12  <none>        Oracle Linux Server 9.6  6.12.0-105.51.5.el9uek.x86_64  containerd://2.0.5-k3s1
+BankCluster-03  Ready    control-plane,etcd,master   150d   v1.32.6+rke2r1   192.168.10.13  <none>        Oracle Linux Server 9.6  6.12.0-105.51.5.el9uek.x86_64  containerd://2.0.5-k3s1
+BankCluster-04  Ready    <none>                      123d   v1.32.6+rke2r1   192.168.10.14  <none>        Oracle Linux Server 9.6  6.12.0-105.51.5.el9uek.x86_64  containerd://2.0.5-k3s1
+BankCluster-05  Ready    <none>                      123d   v1.32.6+rke2r1   192.168.10.15  <none>        Oracle Linux Server 9.6  6.12.0-105.51.5.el9uek.x86_64  containerd://2.0.5-k3s1
+BankCluster-06  Ready    <none>                      123d   v1.32.6+rke2r1   192.168.10.16  <none>        Oracle Linux Server 9.6  6.12.0-105.51.5.el9uek.x86_64  containerd://2.0.5-k3s1
+```
+
+Follow the above steps to upgrade the other Master Nodes one by one and ensure cluster health and other Pod status at each stage.
+
+**Note:** After updating all Master servers, section 8-2 must be checked.
+
+#### 8-7) Updating Worker Servers
+After successfully updating all Master servers, update the Worker servers as follows, considering section 8-5.
+```bash
+# take backup from rke2 artifacts
+mkdir /root/bkp_rke2_1.32.6
+mv /var/lib/rancher/rke2/agent/images/rke2-images* /root/bkp_rke2_1.32.6/
+mv /usr/local/bin/rke2* /root/bkp_rke2_1.32.6/
+ls -ltrh /root/bkp_rke2_1.32.6
+```
+Expected output:
+```bash
+total 1.4G
+-rwxr-xr-x 1 root root 5.5K Feb 18 07:28 rke2-uninstall.sh
+-rwxr-xr-x 1 root root 3.4K Feb 18 07:28 rke2-killall.sh
+-rwxr-xr-x 1 root root 119M Feb 18 07:28 rke2
+-rw-r--r-- 1 root root 425M Feb 18 07:29 rke2-images-cilium.linux-amd64.tar.zst
+-rw-r--r-- 1 root root 793M Feb 18 07:29 rke2-images.linux-amd64.tar.zst
+```
+```bash
+# uncompress tar file
+tar -xvf rke2_<new version>.tar
+# copy needed new artifacts
+cd /root/rke2_v<new version>_full
+cp rke2_<new version>_images/* /var/lib/rancher/rke2/agent/images/
+ls -ltrh /var/lib/rancher/rke2/agent/images/
+```
+Expected output:
+```bash
+total 1.3G
+-rw-r--r-- 1 root root 557M Feb 18 11:28 rke2-images-cilium.linux-amd64.tar.zst
+-rw-r--r-- 1 root root 719M Feb 18 11:28 rke2-images.linux-amd64.tar.zst
+```
+```bash
+cd rke2<new version>
+tar xvfz rke2.linux-amd64.tar.gz
+cp bin/rke2-uninstall.sh bin/rke2-killall.sh bin/rke2 /usr/local/bin/
+chmod +x /usr/local/bin/*
+ls -ltrh /usr/local/bin/rke2*
+
+```
+Expected output:
+```bash
+-rwxr-xr-x 1 root root 5.5K Feb 18 11:23 /usr/local/bin/rke2-uninstall.sh
+-rwxr-xr-x 1 root root 3.3K Feb 18 11:23 /usr/local/bin/rke2-killall.sh
+-rwxr-xr-x 1 root root 119M Feb 18 11:23 /usr/local/bin/rke2
+```
+```bash
+rke2-killall.sh ; systemctl restart rke2-agent
+```
+After successful update completion, the cluster status is as follows.
+```bash
+kubectl get nodes -o wide
+NAME            STATUS   ROLES                       AGE    VERSION          INTERNAL-IP    EXTERNAL-IP   OS-IMAGE                KERNEL-VERSION                 CONTAINER-RUNTIME
+BankCluster-01  Ready    control-plane,etcd,master   150d   v1.33.8+rke2r1   192.168.10.11  <none>        Oracle Linux Server 9.6  6.12.0-105.51.5.el9uek.x86_64  containerd://2.1.5-k3s1
+BankCluster-02  Ready    control-plane,etcd,master   150d   v1.33.8+rke2r1   192.168.10.12  <none>        Oracle Linux Server 9.6  6.12.0-105.51.5.el9uek.x86_64  containerd://2.1.5-k3s1
+BankCluster-03  Ready    control-plane,etcd,master   150d   v1.33.8+rke2r1   192.168.10.13  <none>        Oracle Linux Server 9.6  6.12.0-105.51.5.el9uek.x86_64  containerd://2.1.5-k3s1
+BankCluster-04  Ready    <none>                      123d   v1.33.8+rke2r1   192.168.10.14  <none>        Oracle Linux Server 9.6  6.12.0-105.51.5.el9uek.x86_64  containerd://2.1.5-k3s1
+BankCluster-05  Ready    <none>                      123d   v1.32.6+rke2r1   192.168.10.15  <none>        Oracle Linux Server 9.6  6.12.0-105.51.5.el9uek.x86_64  containerd://2.0.5-k3s1
+BankCluster-06  Ready    <none>                      123d   v1.32.6+rke2r1   192.168.10.16  <none>        Oracle Linux Server 9.6  6.12.0-105.51.5.el9uek.x86_64  containerd://2.0.5-k3s1
+```
+Follow the above steps to upgrade the other Worker Nodes one by one and ensure RKE2, Rook-Ceph, and other Pod health at each stage.
+
+#### 8-8) Rollback to Previous RKE2 Version
+If needed to rollback and return to the previous version, perform the following commands.
+
+```bash
+# copy needed new artifacts
+cd /root/bkp_rke2_1.32.6/
+rm -rf /var/lib/rancher/rke2/agent/images/rke2-images*
+cp rke2-images* /var/lib/rancher/rke2/agent/images/
+rm -rf /usr/local/bin/rke2*
+cp rke2-uninstall.sh rke2-killall.sh rke2 /usr/local/bin/
+
+# Restart Master Nodes
+rke2-killall.sh ; systemctl restart rke2-server
+
+# Restart Worker Nodes
+rke2-killall.sh ; systemctl restart rke2-agent
+```
+### 9) Appendices
+#### 9-1) Docker Images
+The Borna service Docker Image file is sent to banks with the .tar extension.
+
+**Note:** Please trust the Registry using one of the conventional methods and modify the registry config so that there are no issues when pulling images.  
+
+During the Borna service installation process, these images must be available in their original format. Therefore, they must be available on the local Registry configured as an Endpoint in /etc/rancher/rke2/registries.yaml and in the RKE2 Cluster. This Endpoint can refer to a Local hosted Registry or a Virtual Repository/group consisting of several Remote Repositories and a Local Hosted Registry.  
+
+This appendix describes how to place the images sent (by ISC) in a Local Hosted Registry. Note that Docker and its commands are used here.  
+
+First, load the images into your local Docker environment.  
+
+```bash
+docker image load -i /path/to/image/directory/image_bank_HLF.tar > images.txt
+```
+The list of loaded images is saved in the images.txt file.
+
+At this stage, change the tag of all images in the images.txt file to the bank's Local hosted Registry. For example:
+
+```bash
+docker tag Image-Name:TAG new-REPOSITORY/Image-Name:TAG
+docker tag hyperledger/grpc-web:latest bank-repo/hyperledger/grpc-web:latest
+```
+Next, push all images to the bank's Local Hosted Registry.
+```bash
+docker login bank-repo
+docker push bank-repo/hyperledger/grpc-web:latest
+```
+After correctly pushing the images, if the mirrors in the RKE2 Registry are configured correctly (section 5-11) and trusted, run the following YAML file on the Master Node.
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: the-web-test
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: webtest
+  template:
+    metadata:
+      labels:
+        app: webtest
+    spec:
+      containers:
+      - name: web-test
+        image: hyperledger/grpc-web:latest
+        imagePullPolicy: Always
+EOF
+```
+Then verify that the Pods are up on all Workers with the following command:
+```bash
+kubectl get pods -l app=webtest -n default -o wide
+```
+Expected output:
+```bash
+NAME                 READY   STATUS    RESTARTS   AGE    IP            NODE                NOMINATED NODE   READINESS GATES
+the-web-test-fcwp4   1/1     Running   0          118s   10.22.1.161   BankcluserWorker01  <none>           <none>
+the-web-test-fr42z   1/1     Running   0          118s   10.22.0.56    BankcluserWorker02  <none>           <none>
+the-web-test-npva4   1/1     Running   0          118s   10.22.0.22    BankcluserWorker03  <none>           <none>
+...
+```
+If the Pods are Up & Running on all Workers, remove the test pods from the cluster with the following command:
+```bash
+kubectl delete daemonsets the-web-test -n default
+```
 
 
 
