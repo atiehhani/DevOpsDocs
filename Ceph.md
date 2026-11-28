@@ -1,3 +1,126 @@
+``
+### 9) Appendices
+#### 9-1) Docker Images
+The Borna service Docker Image file is sent to banks with the .tar extension.
+
+**Note:** Please trust the Registry using one of the conventional methods and modify the registry config so that there are no issues when pulling images.  
+
+During the Borna service installation process, these images must be available in their original format. Therefore, they must be available on the local Registry configured as an Endpoint in /etc/rancher/rke2/registries.yaml and in the RKE2 Cluster. This Endpoint can refer to a Local hosted Registry or a Virtual Repository/group consisting of several Remote Repositories and a Local Hosted Registry.  
+
+This appendix describes how to place the images sent (by ISC) in a Local Hosted Registry. Note that Docker and its commands are used here.  
+
+First, load the images into your local Docker environment.  
+
+```bash
+docker image load -i /path/to/image/directory/image_bank_HLF.tar > images.txt
+```
+The list of loaded images is saved in the images.txt file.
+
+At this stage, change the tag of all images in the images.txt file to the bank's Local hosted Registry. For example:
+
+```bash
+docker tag Image-Name:TAG new-REPOSITORY/Image-Name:TAG
+docker tag hyperledger/grpc-web:latest bank-repo/hyperledger/grpc-web:latest
+```
+Next, push all images to the bank's Local Hosted Registry.
+```bash
+docker login bank-repo
+docker push bank-repo/hyperledger/grpc-web:latest
+```
+After correctly pushing the images, if the mirrors in the RKE2 Registry are configured correctly (section 5-11) and trusted, run the following YAML file on the Master Node.
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: the-web-test
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: webtest
+  template:
+    metadata:
+      labels:
+        app: webtest
+    spec:
+      containers:
+      - name: web-test
+        image: hyperledger/grpc-web:latest
+        imagePullPolicy: Always
+EOF
+```
+Then verify that the Pods are up on all Workers with the following command:
+```bash
+kubectl get pods -l app=webtest -n default -o wide
+```
+Expected output:
+```bash
+NAME                 READY   STATUS    RESTARTS   AGE    IP            NODE                NOMINATED NODE   READINESS GATES
+the-web-test-fcwp4   1/1     Running   0          118s   10.22.1.161   BankcluserWorker01  <none>           <none>
+the-web-test-fr42z   1/1     Running   0          118s   10.22.0.56    BankcluserWorker02  <none>           <none>
+the-web-test-npva4   1/1     Running   0          118s   10.22.0.22    BankcluserWorker03  <none>           <none>
+...
+```
+If the Pods are Up & Running on all Workers, remove the test pods from the cluster with the following command:
+```bash
+kubectl delete daemonsets the-web-test -n default
+```
+#### 9-2) Rook Ceph Installation Procedure
+**Note:** Rook Ceph images are sent as .tar.
+
+OSD Symlink:
+
+To install Rook Ceph, add equal-capacity disks to all 6 Worker machines that have been designated for the OSD role. Note that the relevant disks must be raw and unpartitioned.
+
+Since disk names in RedHat 9 may change after reboot and these names are not persistent, introducing disks to OSDs directly from /dev/<Raw Disk Name> significantly increases the risk of data loss. Therefore, we introduce disks to OSDs based on their inherent characteristics.
+
+In this guide, the added raw disk with the name /dev/sdb is considered as an example.
+
+In the first step, identify the raw disk with the following command:
+
+```bash
+lsblk
+NAME   MAJ:MIN RM  SIZE RO TYPE MOUNTPOINTS
+sda      8:0    0   28G  0 disk
+├─sda1   8:1    0  600M  0 part /boot/efi
+├─sda2   8:2    0    1G  0 part /boot
+└─sda3   8:3    0 18.4G  0 part
+  ├─ol-root 252:0  0 16.4G  0 lvm  /
+  └─ol-swap 252:1  0    2G  0 lvm  [SWAP]
+sdb      8:16   0   16G  0 disk
+sr0     11:0    1 11.7G  0 rom
+```
+Based on the raw disk name, apply the following commands on each of the 6 Worker machines:
+```bash
+DEVICE=/dev/<raw disk>
+DISKNAME=rook-data-disk1
+SUBSYSTEM=$(udevadm info --query=all --name=$DEVICE | grep '^E: SUBSYSTEM=' | cut -d= -f2)
+DEVTYPE=$(udevadm info --query=all --name=$DEVICE | grep '^E: DEVTYPE=' | cut -d= -f2)
+RAW_DEVPATH=$(udevadm info --query=all --name=$DEVICE | grep '^E: DEVPATH=' | cut -d= -f2)
+BASE_DEVPATH=$(echo "$RAW_DEVPATH" | sed 's#/block/sd.*#/block/sd*#')
+```
+Then, on all Worker machines:
+```bash
+sudo tee /etc/udev/rules.d/99-rook-disks.rules > /dev/null <<EOF
+SUBSYSTEM=="$SUBSYSTEM", ENV{DEVTYPE}=="$DEVTYPE", KERNEL=="sd*", ENV{DEVPATH}=="$BASE_DEVPATH", SYMLINK+="$DISKNAME"
+EOF
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+To verify the correctness of the procedure on all Worker machines:
+```bash
+ls -l /dev/$DISKNAME
+/dev/rook-data-disk1 -> /dev/sdb
+```
+
+
+
+
+
+
+
 ## Rook Ceph Installation:
 Assuming the Rook files have been obtained from the official GitHub at:
 ```bash
