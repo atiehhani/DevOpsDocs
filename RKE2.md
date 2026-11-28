@@ -856,6 +856,7 @@ total 1.3G
 -rw-r--r-- 1 root root 557M Feb 18 11:28 rke2-images-cilium.linux-amd64.tar.zst
 -rw-r--r-- 1 root root 719M Feb 18 11:28 rke2-images.linux-amd64.tar.zst
 ```
+
 ```bash
 cd rke2<new version>
 tar xvfz rke2.linux-amd64.tar.gz
